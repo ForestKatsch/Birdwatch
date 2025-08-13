@@ -49,6 +49,7 @@ public struct QueryState<Output> {
 
 // MARK: - Internal coordinator
 
+@MainActor
 final class QueryCoordinator<Output>: ObservableObject {
   @Published var state: QueryState<Output> = .init(.idle)
   private var task: Task<Void, Never>? = nil
@@ -62,15 +63,15 @@ final class QueryCoordinator<Output>: ObservableObject {
     currentKey = key
     state = .init(.idle)
     let keyForTask = key
-    task = Task { [weak self] in
+    task = Task { @MainActor [weak self] in
       await client.retainAny(keyForTask)
       defer { Task { await client.releaseAny(keyForTask) } }
       if let existing = await client.readAny(keyForTask) {
-        await MainActor.run { self?.state = Self.makeState(from: existing) }
+        self?.state = Self.makeState(from: existing)
       }
       await client.ensureQueryAny(keyForTask)
       for await record in client.updatesAny(for: keyForTask) {
-        await MainActor.run { self?.state = Self.makeState(from: record) }
+        self?.state = Self.makeState(from: record)
       }
     }
   }
@@ -108,6 +109,7 @@ final class QueryCoordinator<Output>: ObservableObject {
 // MARK: - @Query property wrapper
 
 @propertyWrapper
+@MainActor
 public struct Query<Key: Hashable & Sendable, Output: Sendable> {
   private let key: Key
   @Environment(\.queryClient) private var client
@@ -118,10 +120,12 @@ public struct Query<Key: Hashable & Sendable, Output: Sendable> {
     _coordinator = StateObject(wrappedValue: QueryCoordinator<Output>())
   }
 
+  public var wrappedValue: QueryState<Output> { coordinator.state }
 }
 
 @MainActor
-extension Query: DynamicProperty {
-  public var wrappedValue: QueryState<Output> { coordinator.state }
-  public mutating func update() { coordinator.update(client: client, key: AnyHashable(key)) }
+extension Query: @preconcurrency DynamicProperty {
+  public mutating func update() { 
+    coordinator.update(client: client, key: AnyHashable(key))
+  }
 }
