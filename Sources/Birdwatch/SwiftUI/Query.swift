@@ -5,6 +5,7 @@
 //  Created by Forest Katsch on 8/12/25.
 //
 
+import Foundation
 import SwiftUI
 
 // MARK: - Environment key for a type-erased query client
@@ -46,56 +47,45 @@ public struct QueryState<Output> {
   }
 }
 
-// MARK: - @Query property wrapper
+// MARK: - Internal coordinator
 
-@propertyWrapper
-public struct Query<Key: Hashable & Sendable, Output: Sendable>: DynamicProperty {
-  private let key: Key
-  @Environment(\ ..queryClient) private var client
-  @State private var state: QueryState<Output> = .init(.idle)
-  @State private var subscriptionTask: Task<Void, Never>? = nil
-  @State private var lastKeyHash: AnyHashable? = nil
+final class QueryCoordinator<Output>: ObservableObject {
+  @Published var state: QueryState<Output> = .init(.idle)
+  private var task: Task<Void, Never>? = nil
+  private var currentKey: AnyHashable? = nil
+  private var client: (any AnyQueryClient)? = nil
 
-  public init(_ key: Key) {
-    self.key = key
-  }
-
-  public var wrappedValue: QueryState<Output> { state }
-
-  public mutating func update() {
-    let anyKey = AnyHashable(key)
-    // Re-subscribe if key changed
-    if lastKeyHash != anyKey {
-      lastKeyHash = anyKey
-      subscriptionTask?.cancel()
-      state = .init(.idle)
-      subscriptionTask = Task { @MainActor in
-        // Seed with existing cache value if present
-        if let existing = await client.readAny(anyKey) {
-          apply(record: existing)
-        }
-        // Ensure a fetch occurs if needed
-        await client.ensureQueryAny(anyKey)
-        // Stream updates
-        for await record in client.updatesAny(for: anyKey) {
-          apply(record: record)
-        }
+  func update(client: any AnyQueryClient, key: AnyHashable) {
+    self.client = client
+    guard currentKey != key else { return }
+    task?.cancel()
+    currentKey = key
+    state = .init(.idle)
+    let keyForTask = key
+    task = Task { [weak self] in
+      await client.retainAny(keyForTask)
+      defer { Task { await client.releaseAny(keyForTask) } }
+      if let existing = await client.readAny(keyForTask) {
+        await MainActor.run { self?.state = Self.makeState(from: existing) }
+      }
+      await client.ensureQueryAny(keyForTask)
+      for await record in client.updatesAny(for: keyForTask) {
+        await MainActor.run { self?.state = Self.makeState(from: record) }
       }
     }
   }
 
-  @MainActor
-  private func apply(record: AnyQueryRecord) {
+  private static func makeState(from record: AnyQueryRecord) -> QueryState<Output> {
     switch record.status {
     case .idle:
-      state = .init(.idle)
+      return .init(.idle)
     case .loading:
-      state = .init(.loading)
+      return .init(.loading)
     case .success:
       if let boxed = record.data?.base as? Output {
-        state = .init(.success(boxed))
+        return .init(.success(boxed))
       } else {
-        state = .init(
+        return .init(
           .error(
             NSError(
               domain: "Birdwatch", code: 1,
@@ -103,9 +93,9 @@ public struct Query<Key: Hashable & Sendable, Output: Sendable>: DynamicProperty
       }
     case .error:
       if let err = record.error?.base {
-        state = .init(.error(err))
+        return .init(.error(err))
       } else {
-        state = .init(
+        return .init(
           .error(
             NSError(
               domain: "Birdwatch", code: 2,
@@ -113,4 +103,25 @@ public struct Query<Key: Hashable & Sendable, Output: Sendable>: DynamicProperty
       }
     }
   }
+}
+
+// MARK: - @Query property wrapper
+
+@propertyWrapper
+public struct Query<Key: Hashable & Sendable, Output: Sendable> {
+  private let key: Key
+  @Environment(\.queryClient) private var client
+  @StateObject private var coordinator: QueryCoordinator<Output>
+
+  public init(_ key: Key) {
+    self.key = key
+    _coordinator = StateObject(wrappedValue: QueryCoordinator<Output>())
+  }
+
+}
+
+@MainActor
+extension Query: DynamicProperty {
+  public var wrappedValue: QueryState<Output> { coordinator.state }
+  public mutating func update() { coordinator.update(client: client, key: AnyHashable(key)) }
 }
