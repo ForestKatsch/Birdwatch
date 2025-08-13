@@ -22,6 +22,16 @@ public final class QueryClient<Key: Hashable & Sendable, Output: Sendable> {
     startGC()
   }
 
+  // Convenience initializer matching the README example syntax
+  public init(
+    config: QueryConfig = .init(), 
+    _ fetcher: @escaping @Sendable (Key) async throws -> Output
+  ) {
+    self.config = config
+    self.fetcher = fetcher
+    startGC()
+  }
+
   public func ensureQuery(_ key: Key, force: Bool = false) async {
     // Decide if we need to fetch
     let now = Date()

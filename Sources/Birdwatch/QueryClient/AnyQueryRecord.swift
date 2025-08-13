@@ -48,17 +48,17 @@ public protocol AnyQueryClient: Sendable {
 
 // MARK: - Adapter over your generic QueryClient
 
-/// Bridges a concrete `QueryClient<K, AnySendable>` into the type-erased surface.
+/// Bridges any concrete `QueryClient<K, V>` into the type-erased surface.
+/// This allows users to use QueryClient with their specific types and still work with SwiftUI environment.
 /// Note: We mark this `@unchecked Sendable` because it holds a reference type. The
 /// underlying client should be actor-contained and safe to share.
-public final class QueryClientAdapter<K: Hashable & Sendable>: AnyQueryClient, @unchecked Sendable {
-  private let client: QueryClient<K, AnySendable>
-  public init(_ client: QueryClient<K, AnySendable>) { self.client = client }
+public final class QueryClientAdapter<K: Hashable & Sendable, V: Sendable>: AnyQueryClient, @unchecked Sendable {
+  private let client: QueryClient<K, V>
+  public init(_ client: QueryClient<K, V>) { self.client = client }
 
   public func readAny(_ key: AnyHashable) async -> AnyQueryRecord? {
     guard let k = key as? K, let rec = await client.read(k) else { return nil }
-    // `rec.data` is `AnySendable?`, `rec.error` is `Error?`
-    return AnyQueryRecord(data: rec.data?.base, error: rec.error, status: rec.status)
+    return AnyQueryRecord(data: rec.data, error: rec.error, status: rec.status)
   }
 
   public func ensureQueryAny(_ key: AnyHashable) async {
@@ -72,7 +72,7 @@ public final class QueryClientAdapter<K: Hashable & Sendable>: AnyQueryClient, @
       Task {
         let stream = await client.updates(for: k)
         for await rec in stream {
-          cont.yield(AnyQueryRecord(data: rec.data?.base, error: rec.error, status: rec.status))
+          cont.yield(AnyQueryRecord(data: rec.data, error: rec.error, status: rec.status))
         }
         cont.finish()
       }
@@ -87,6 +87,15 @@ public final class QueryClientAdapter<K: Hashable & Sendable>: AnyQueryClient, @
   public func releaseAny(_ key: AnyHashable) async {
     guard let k = key as? K else { return }
     await client.release(k)
+  }
+}
+
+// MARK: - Convenience extension for easy adapter creation
+
+extension QueryClient {
+  /// Creates a type-erased adapter for this query client that can be used with SwiftUI environment.
+  public func eraseToAnyQueryClient() -> QueryClientAdapter<Key, Output> {
+    QueryClientAdapter(self)
   }
 }
 

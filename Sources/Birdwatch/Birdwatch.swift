@@ -1,2 +1,3 @@
-// The Swift Programming Language
-// https://docs.swift.org/swift-book
+// Birdwatch - A reimagining of React Query for native Swift apps
+
+import Foundation
