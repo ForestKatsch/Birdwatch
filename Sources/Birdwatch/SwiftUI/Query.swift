@@ -133,3 +133,15 @@ extension Query: @preconcurrency DynamicProperty {
     coordinator.update(client: client, key: AnyHashable(key))
   }
 }
+
+// MARK: - Convenient View extensions
+
+extension View {
+  /// Sets the query client for this view and its children.
+  /// Automatically handles type erasure so you don't need to call `.eraseToAnyQueryClient()`.
+  public func queryClient<Key: Hashable & Sendable, Output: Sendable>(
+    _ client: QueryClient<Key, Output>
+  ) -> some View {
+    self.environment(\.queryClient, client.eraseToAnyQueryClient())
+  }
+}
