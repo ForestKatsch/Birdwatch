@@ -61,8 +61,12 @@ final class QueryCoordinator<Output>: ObservableObject {
     guard currentKey != key else { return }
     task?.cancel()
     currentKey = key
-    state = .init(.idle)
     let keyForTask = key
+    
+    // Defer initial state update to avoid "Publishing changes from within view updates"
+    Task.detached { @MainActor [weak self] in
+      self?.state = .init(.idle)
+    }
     task = Task { @MainActor [weak self] in
       await client.retainAny(keyForTask)
       defer { Task { await client.releaseAny(keyForTask) } }
