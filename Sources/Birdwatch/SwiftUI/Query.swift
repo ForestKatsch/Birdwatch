@@ -67,11 +67,15 @@ final class QueryCoordinator<Output>: ObservableObject {
       await client.retainAny(keyForTask)
       defer { Task { await client.releaseAny(keyForTask) } }
       if let existing = await client.readAny(keyForTask) {
-        self?.state = Self.makeState(from: existing)
+        Task { @MainActor in
+          self?.state = Self.makeState(from: existing)
+        }
       }
       await client.ensureQueryAny(keyForTask)
       for await record in client.updatesAny(for: keyForTask) {
-        self?.state = Self.makeState(from: record)
+        Task { @MainActor in
+          self?.state = Self.makeState(from: record)
+        }
       }
     }
   }
