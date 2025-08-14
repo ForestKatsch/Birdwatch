@@ -7,7 +7,6 @@
 
 import Foundation
 
-@MainActor
 public final class QueryClient<Key: Hashable & Sendable, Output: Sendable> {
   public let config: QueryConfig
   private let cache = QueryCache<Key, Output>()
@@ -119,8 +118,9 @@ public final class QueryClient<Key: Hashable & Sendable, Output: Sendable> {
     await cache.updates(for: key)
   }
 
+  @MainActor
   public func appReachedForeground() {
-    Task { @MainActor in
+    Task {
       let keysToRefetch = await cache.refetchAllStale()
 
       // Fetch each key in parallel
